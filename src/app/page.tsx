@@ -1,65 +1,158 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useEffect, useMemo, useState } from "react";
+import { ChartCard } from "@/components/ChartCard";
+import { ChartTypeToggle } from "@/components/ChartTypeToggle";
+import { RangeToggle, type RangeKey } from "@/components/RangeToggle";
+
+type WatchItem = { symbol: string; createdAt: string };
+type QuoteRow = {
+  symbol: string;
+  name: string;
+  price: number | null;
+  change: number | null;
+  changePct: number | null;
+  currency: string | null;
+};
+
+const DEFAULT_WATCHLIST = ["AAPL", "MSFT", "SPY", "VOO", "QQQ"];
+
+export default function HomePage() {
+  const [watchlist, setWatchlist] = useState<WatchItem[]>([]);
+  const [quotes, setQuotes] = useState<Record<string, QuoteRow>>({});
+  const [symbolInput, setSymbolInput] = useState("");
+  const [chartType, setChartType] = useState<"candles" | "line">("candles");
+  const [range, setRange] = useState<RangeKey>("6mo");
+  const [isBusy, setIsBusy] = useState(false);
+
+  const symbols = useMemo(() => watchlist.map((w) => w.symbol).filter(Boolean), [watchlist]);
+
+  async function refreshWatchlist() {
+    const res = await fetch("/api/watchlist", { cache: "no-store" });
+    if (!res.ok) throw new Error("Failed to load watchlist");
+    const data = (await res.json()) as { items: WatchItem[] };
+    setWatchlist(data.items);
+  }
+
+  async function refreshQuotes(nextSymbols: string[]) {
+    if (nextSymbols.length === 0) return;
+    const res = await fetch(`/api/market/quote?symbols=${encodeURIComponent(nextSymbols.join(","))}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { quotes: QuoteRow[] };
+    const map: Record<string, QuoteRow> = {};
+    for (const q of data.quotes) map[q.symbol] = q;
+    setQuotes(map);
+  }
+
+  async function ensureDefaultsIfEmpty() {
+    const res = await fetch("/api/watchlist", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = (await res.json()) as { items: WatchItem[] };
+    if (data.items.length > 0) {
+      setWatchlist(data.items);
+      return;
+    }
+    for (const s of DEFAULT_WATCHLIST) {
+      await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ symbol: s }),
+      });
+    }
+    await refreshWatchlist();
+  }
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("chartType");
+    if (saved === "candles" || saved === "line") setChartType(saved);
+    ensureDefaultsIfEmpty().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    refreshQuotes(symbols).catch(() => {});
+  }, [symbols]);
+
+  async function onAddSymbol() {
+    const sym = symbolInput.trim().toUpperCase();
+    if (!sym) return;
+    setIsBusy(true);
+    try {
+      const res = await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ symbol: sym }),
+      });
+      if (res.ok) {
+        setSymbolInput("");
+        await refreshWatchlist();
+      }
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function onRemoveSymbol(sym: string) {
+    setIsBusy(true);
+    try {
+      await fetch(`/api/watchlist?symbol=${encodeURIComponent(sym)}`, { method: "DELETE" });
+      await refreshWatchlist();
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="container">
+      <div className="topbar">
+        <div>
+          <div className="title">Stock Dashboard</div>
+          <div className="subtitle">Yahoo Finance data • SQLite watchlist • Candles/Line toggle</div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div className="muted">{symbols.length} symbols</div>
+      </div>
+
+      <div className="panel">
+        <div className="controls">
+          <input
+            className="input"
+            placeholder="Add symbol (e.g. AAPL, SPY, VOO)"
+            value={symbolInput}
+            onChange={(e) => setSymbolInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onAddSymbol();
+            }}
+          />
+          <button className="btn" disabled={isBusy} onClick={onAddSymbol}>
+            Add
+          </button>
+
+          <RangeToggle value={range} onChange={setRange} />
+
+          <ChartTypeToggle
+            value={chartType}
+            onChange={(v) => {
+              setChartType(v);
+              window.localStorage.setItem("chartType", v);
+            }}
+          />
         </div>
-      </main>
-    </div>
+      </div>
+
+      <div className="grid">
+        {symbols.map((sym) => (
+          <ChartCard
+            key={sym}
+            symbol={sym}
+            quote={quotes[sym]}
+            range={range}
+            chartType={chartType}
+            onRemove={() => onRemoveSymbol(sym)}
+          />
+        ))}
+      </div>
+    </main>
   );
 }
